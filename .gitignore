@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# RAG chat-app: secrets + local data (AGENTS.md 3-bo'lim)
+.env
+chat.db
+chroma_db/
+uploads/

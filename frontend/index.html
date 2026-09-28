@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>RAG Chat — LangChain + Gemini</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <h2>💬 RAG Chat</h2>
+    <button id="newChat">+ Yangi chat</button>
+    <div class="upload-box">
+      <label for="fileInput">📎 PDF / TXT yuklash</label>
+      <input type="file" id="fileInput" accept=".pdf,.txt,.md" />
+      <div id="uploadStatus"></div>
+    </div>
+    <div class="row">
+      <button id="clearDocs" class="danger">🗑 Hujjatlarni unut</button>
+    </div>
+    <div id="stats" class="stats"></div>
+    <ul id="sessions"></ul>
+  </aside>
+  <main class="chat">
+    <div id="messages" class="messages"></div>
+    <div id="sources" class="sources"></div>
+    <form id="form" class="input-row">
+      <textarea id="input" rows="2" placeholder="Savol yozing... (Enter = yuborish)"></textarea>
+      <button type="submit">➤</button>
+    </form>
+  </main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
