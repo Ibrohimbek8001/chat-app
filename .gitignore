@@ -220,5 +220,7 @@ __marimo__/
 # RAG chat-app: secrets + local data (AGENTS.md 3-bo'lim)
 .env
 chat.db
+chat.db-wal
+chat.db-shm
 chroma_db/
 uploads/

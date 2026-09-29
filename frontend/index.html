@@ -11,15 +11,17 @@
 <div class="layout">
   <aside class="sidebar">
     <h2>💬 RAG Chat</h2>
-    <button id="newChat">+ Yangi chat</button>
+    <button type="button" id="newChat">+ Yangi chat</button>
     <div class="upload-box">
-      <label for="fileInput">📎 PDF / TXT yuklash <span class="hint">(max 10MB)</span></label>
+      <label for="fileInput">📎 PDF / TXT yuklash <span class="hint" id="uploadHint">(max 10MB)</span></label>
       <input type="file" id="fileInput" accept=".pdf,.txt,.md" />
       <div id="uploadStatus" role="status"></div>
     </div>
-    <div class="row">
-      <button id="clearDocs" class="danger">🗑 Hujjatlarni unut</button>
-    </div>
+    <details class="docs-box" id="docsBox">
+      <summary>📚 Hujjatlar <span id="docsCount"></span></summary>
+      <ul id="docs"></ul>
+      <button type="button" id="clearDocs" class="danger">🗑 Hammasini unut</button>
+    </details>
     <div id="stats" class="stats"></div>
     <ul id="sessions"></ul>
   </aside>
@@ -31,15 +33,15 @@
         <span>Masalan: "Bu hujjat nima haqida?" — javob manbasi bilan keladi.</span>
       </div>
     </div>
-    <div id="sources" class="sources"></div>
     <form id="form" class="input-row">
       <textarea id="input" rows="2" maxlength="4000" placeholder="Savol yozing... (Enter = yuborish, Shift+Enter = yangi qator)"></textarea>
       <span id="charCount" class="char">0/4000</span>
       <button type="submit" id="sendBtn" title="Yuborish">➤</button>
-      <button type="button" id="stopBtn" class="stop" style="display:none" title="To'xtatish">⏹</button>
+      <button type="button" id="stopBtn" class="stop" hidden title="To'xtatish">⏹</button>
     </form>
   </main>
 </div>
+<div id="toast" class="toast" role="alert"></div>
 <script src="app.js"></script>
 </body>
 </html>

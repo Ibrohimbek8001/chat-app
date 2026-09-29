@@ -39,6 +39,13 @@ RETRIEVER_K = max(1, min(RETRIEVER_K, 10))
 MAX_UPLOAD_MB = _safe_int(os.getenv("MAX_UPLOAD_MB", "10"), 10)
 MAX_UPLOAD_MB = max(1, min(MAX_UPLOAD_MB, 50))
 MAX_MESSAGE_CHARS = _safe_int(os.getenv("MAX_MESSAGE_CHARS", "4000"), 4000)
+MAX_MESSAGE_CHARS = max(100, min(MAX_MESSAGE_CHARS, 32000))
+# Ergashuvchi savollarni ("u haqida batafsil") tarix asosida mustaqil
+# qidiruv so'roviga aylantirish (har savolga +1 LLM so'rov)
+QUERY_REWRITE = os.getenv("QUERY_REWRITE", "1").strip().lower() not in ("0", "false", "no", "off")
+# Frontend shu server orqali beriladi, CORS kerak emas. Boshqa domendan
+# ishlatish kerak bo'lsa: ALLOWED_ORIGINS=http://localhost:5173,https://...
+ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()]
 
 
 def check_api_key() -> bool:

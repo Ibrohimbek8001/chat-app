@@ -1,5 +1,4 @@
 import json
-import shutil
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -37,12 +36,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="RAG Chat App (LangChain + Chroma + Gemini)", lifespan=lifespan)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Frontend shu serverdan beriladi — CORS faqat aniq ruxsat berilgan originlar uchun
+if config.ALLOWED_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=config.ALLOWED_ORIGINS,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 
 def require_rag() -> RAGService:
@@ -55,13 +56,12 @@ def require_rag() -> RAGService:
 
 
 class ChatIn(BaseModel):
-    message: str = Field(min_length=1, max_length=4000)
+    message: str = Field(min_length=1, max_length=config.MAX_MESSAGE_CHARS)
     session_id: str | None = Field(default=None, max_length=64)
 
 
-class ChatStreamIn(BaseModel):
-    message: str = Field(min_length=1, max_length=4000)
-    session_id: str | None = Field(default=None, max_length=64)
+class RenameIn(BaseModel):
+    title: str = Field(min_length=1, max_length=100)
 
 
 ALLOWED_SUFFIXES = (".pdf", ".txt", ".md")
@@ -71,6 +71,16 @@ def _safe_filename(name: str) -> str:
     # Path traversal dan himoya: faqat fayl nomi olinadi
     clean = Path(name or "file").name.strip()
     return clean[:100] or "file"
+
+
+def _sse(data: dict) -> str:
+    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+async def _resolve_sid(session_id: str | None) -> str:
+    if session_id and await run_in_threadpool(database.get_session, session_id):
+        return session_id
+    return (await run_in_threadpool(database.create_session))["id"]
 
 
 # ---------- 1. Fayl yuklash -> Chroma ----------
@@ -103,7 +113,7 @@ async def upload(file: UploadFile = File(...)):
     finally:
         tmp.unlink(missing_ok=True)
 
-    if result.get("chunks", 0) == 0:
+    if result.get("chunks", 0) == 0 and not result.get("skipped"):
         raise HTTPException(400, result.get("error", "Fayl o'qilmadi"))
     total = await run_in_threadpool(svc.doc_count)
     return {"ok": True, **result, "total_vectors": total}
@@ -116,66 +126,66 @@ async def chat(body: ChatIn):
     message = body.message.strip()
     if not message:
         raise HTTPException(400, "Bo'sh xabar")
-    sid = body.session_id or (await run_in_threadpool(database.create_session))["id"]
-    if not await run_in_threadpool(database.get_session, sid):
-        sid = (await run_in_threadpool(database.create_session))["id"]
+    sid = await _resolve_sid(body.session_id)
     history = await run_in_threadpool(database.get_messages, sid)
     out = await svc.aask(message, history)
     if out.get("error"):
         raise HTTPException(502, out["answer"])
-    await run_in_threadpool(database.add_message, sid, "user", message)
-    await run_in_threadpool(database.add_message, sid, "assistant", out["answer"])
-    return {"session_id": sid, "answer": out["answer"], "sources": out["sources"]}
+    await run_in_threadpool(database.add_exchange, sid, message, out["answer"], out["sources"])
+    return {
+        "session_id": sid,
+        "answer": out["answer"],
+        "sources": out["sources"],
+        "warning": out.get("warning"),
+    }
+
+
+STOPPED_NOTE = "\n\n_(javob to'xtatildi)_"
+ERROR_NOTE = "\n\n_(javob xatolik sababli to'liq emas)_"
 
 
 async def _stream_gen(svc: RAGService, message: str, sid: str):
+    # session_id birinchi event: stop/xatolikda ham frontend sessiyani biladi
+    yield _sse({"type": "session", "session_id": sid})
     history = await run_in_threadpool(database.get_messages, sid)
     full: list[str] = []
+    sources: list[dict] = []
+    note = STOPPED_NOTE  # generator oxirigacha yetmasa — client uzilgan
+    saved = False
     try:
         async for part in svc.astream(message, history):
             if part["type"] == "sources":
-                yield f"data: {json.dumps({'type': 'sources', 'sources': part['sources']}, ensure_ascii=False)}\n\n"
+                sources = part["sources"]
+                yield _sse(part)
             elif part["type"] == "error":
-                yield f"data: {json.dumps({'type': 'error', 'text': part['text']}, ensure_ascii=False)}\n\n"
+                note = ERROR_NOTE
+                yield _sse({"type": "error", "text": part["text"]})
                 return
             else:
                 full.append(part["text"])
-                yield f"data: {json.dumps({'type': 'token', 'text': part['text']}, ensure_ascii=False)}\n\n"
+                yield _sse({"type": "token", "text": part["text"]})
+        answer = "".join(full)
+        if answer:
+            await run_in_threadpool(database.add_exchange, sid, message, answer, sources)
+        saved = True
+        yield _sse({"type": "done", "session_id": sid})
     except Exception as e:
-        yield f"data: {json.dumps({'type': 'error', 'text': f'Server xatolik: {e}'}, ensure_ascii=False)}\n\n"
-        return
-    # tugagach DB ga yozamiz (client uzilib qolsa ham xotira qoladi)
-    answer = "".join(full)
-    if answer:
-        await run_in_threadpool(database.add_message, sid, "user", message)
-        await run_in_threadpool(database.add_message, sid, "assistant", answer)
-    yield f"data: {json.dumps({'type': 'done', 'session_id': sid}, ensure_ascii=False)}\n\n"
+        note = ERROR_NOTE
+        yield _sse({"type": "error", "text": f"Server xatolik: {e}"})
+    finally:
+        # Stop / uzilish / xatolik: qisman javobni ham xotiraga yozamiz.
+        # Sinxron chaqiruv — bekor qilingan (cancelled) generator ichida await
+        # qayta bekor bo'ladi; SQLite yozuvi millisekundlar oladi.
+        if not saved and full:
+            try:
+                database.add_exchange(sid, message, "".join(full) + note, sources)
+            except Exception as e:
+                print(f"[DB] qisman javobni saqlab bo'lmadi: {e}")
 
 
-async def _resolve_sid(session_id: str | None) -> str:
-    if session_id and await run_in_threadpool(database.get_session, session_id):
-        return session_id
-    return (await run_in_threadpool(database.create_session))["id"]
-
-
-# ---------- 3. Streaming chat (SSE) ----------
-@app.get("/api/chat/stream")
-async def chat_stream(message: str, session_id: str | None = None):
-    svc = require_rag()
-    message = (message or "").strip()
-    if not message:
-        raise HTTPException(400, "Bo'sh xabar")
-    if len(message) > config.MAX_MESSAGE_CHARS:
-        raise HTTPException(400, f"Xabar juda uzun (>{config.MAX_MESSAGE_CHARS})")
-    sid = await _resolve_sid(session_id)
-    return StreamingResponse(
-        _stream_gen(svc, message, sid), media_type="text/event-stream"
-    )
-
-
+# ---------- 3. Streaming chat (SSE, POST — xabar URL/log ga tushmaydi) ----------
 @app.post("/api/chat/stream")
-async def chat_stream_post(body: ChatStreamIn):
-    """Uzun savollar uchun POST variant (URL limiti yo'q)."""
+async def chat_stream(body: ChatIn):
     svc = require_rag()
     message = body.message.strip()
     if not message:
@@ -197,11 +207,43 @@ async def session_detail(sid: str):
     s = await run_in_threadpool(database.get_session, sid)
     if not s:
         raise HTTPException(404, "Sessiya topilmadi")
-    messages = await run_in_threadpool(database.get_messages, sid, 200)
+    messages = await run_in_threadpool(database.get_messages, sid, 200, True)
     return {"session": s, "messages": messages}
 
 
-# ---------- 6. Hujjatlarni tozalash + statistika ----------
+@app.patch("/api/sessions/{sid}")
+async def rename_session(sid: str, body: RenameIn):
+    title = body.title.strip()
+    if not title:
+        raise HTTPException(400, "Bo'sh nom")
+    if not await run_in_threadpool(database.rename_session, sid, title):
+        raise HTTPException(404, "Sessiya topilmadi")
+    return {"ok": True, "title": title}
+
+
+@app.delete("/api/sessions/{sid}")
+async def delete_session(sid: str):
+    if not await run_in_threadpool(database.delete_session, sid):
+        raise HTTPException(404, "Sessiya topilmadi")
+    return {"ok": True}
+
+
+# ---------- 6. Hujjatlar + statistika ----------
+@app.get("/api/documents")
+async def list_docs():
+    svc = require_rag()
+    return await run_in_threadpool(svc.list_documents)
+
+
+@app.delete("/api/documents/{source}")
+async def delete_doc(source: str):
+    svc = require_rag()
+    removed = await run_in_threadpool(svc.delete_document, source)
+    if not removed:
+        raise HTTPException(404, "Hujjat topilmadi")
+    return {"ok": True, "removed": removed, "total_vectors": await run_in_threadpool(svc.doc_count)}
+
+
 @app.delete("/api/documents")
 async def clear_docs():
     svc = require_rag()
@@ -217,6 +259,10 @@ async def stats():
         "vectors": total_vectors,
         "sessions": len(sessions_list),
         "rag_ready": rag is not None,
+        "limits": {
+            "max_message_chars": config.MAX_MESSAGE_CHARS,
+            "max_upload_mb": config.MAX_UPLOAD_MB,
+        },
     }
 
 
