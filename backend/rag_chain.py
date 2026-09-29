@@ -35,6 +35,10 @@ Qoidalar:
 
 
 class RAGService:
+    # Tarix + kontekst limitlari (token overflow dan himoya)
+    MAX_HISTORY_MESSAGES = 10
+    MAX_HISTORY_CHARS = 6000
+    MAX_PDF_PAGES = 200
     def __init__(self):
         self.embeddings = GoogleGenerativeAIEmbeddings(
             google_api_key=config.GEMINI_API_KEY,
@@ -66,9 +70,12 @@ class RAGService:
         p = Path(file_path)
         if p.suffix.lower() == ".pdf":
             reader = PdfReader(str(p))
-            return "\n".join([(page.extract_text() or "") for page in reader.pages])
-        # .txt / .md
-        return p.read_text(encoding="utf-8", errors="ignore")
+            # Katta PDF larni chegaralash (memory + embedding quota himoyasi)
+            pages = reader.pages[: self.MAX_PDF_PAGES]
+            return "\n".join([(page.extract_text() or "") for page in pages])
+        # .txt / .md — katta fayllarni kesish (masalan 500KB)
+        text = p.read_text(encoding="utf-8", errors="ignore")
+        return text[:500_000]
 
     def ingest(self, file_path: str, filename: str) -> dict:
         text = self._load_file_text(file_path).strip()
@@ -77,12 +84,19 @@ class RAGService:
         return self.ingest_text(text, source=filename)
 
     def ingest_text(self, text: str, source: str) -> dict:
+        # Bo'sh yoki juda katta matnni erta kesish
+        text = (text or "").strip()[:500_000]
+        if not text:
+            return {"chunks": 0, "error": "Bo'sh matn"}
         docs = self.splitter.create_documents(
             [text],
             metadatas=[{"source": source}],
         )
         if not docs:
             return {"chunks": 0, "error": "Bo'laklashda xatolik"}
+        # Chroma add_documents sync — main.py da threadpool da chaqiriladi
+        # Katta hujjatda chunk portlashdan himoya
+        docs = docs[:500]
         self.vectorstore.add_documents(docs)
         return {"chunks": len(docs), "source": source}
 
@@ -102,20 +116,46 @@ class RAGService:
         )
 
     def doc_count(self) -> int:
+        # Chroma versiyalari bo'yicha fallback bilan
         try:
-            return self.vectorstore._collection.count()
+            col = getattr(self.vectorstore, "_collection", None)
+            if col is not None:
+                return col.count()
+            data = self.vectorstore.get(include=[])
+            return len(data.get("ids", []))
         except Exception:
             return 0
 
     # ---------- RETRIEVE + GENERATE (LangChain) ----------
 
     def get_docs(self, query: str) -> list[Document]:
-        if self.doc_count() == 0:
-            return []
+        # doc_count() alohida so'rov edi — to'g'ridan-to'g'ri retriever ga uramiz,
+        # bo'sh kolleksiyada Chroma bo'sh ro'yxat qaytaradi
         try:
             return self.retriever.invoke(query)
         except Exception:
             return []
+
+    async def aget_docs(self, query: str) -> list[Document]:
+        """Async yo'l — event loop ni bloklamaydi."""
+        try:
+            return await self.retriever.ainvoke(query)
+        except Exception:
+            return []
+
+    def _truncate_history(self, history: list[dict]) -> list[dict]:
+        """Oxirgi N xabar + belgi limiti bo'yicha kesish."""
+        recent = history[-self.MAX_HISTORY_MESSAGES :]
+        total = 0
+        out: list[dict] = []
+        # Oxiridan boshlab yig'amiz, keyin tartiblaymiz
+        for m in reversed(recent):
+            c = str(m.get("content", ""))
+            total += len(c)
+            if total > self.MAX_HISTORY_CHARS:
+                break
+            out.append(m)
+        return list(reversed(out))
 
     def _build_messages(self, query: str, docs: list[Document], history: list[dict]) -> list:
         """LangChain chat modeliga beriladigan xabarlar ro'yxati."""
@@ -126,10 +166,12 @@ class RAGService:
             context = "(Hujjat yuklanmagan yoki mos parcha topilmadi)"
 
         messages: list = [("system", f"{SYSTEM_PROMPT}\n\nKONTEKST:\n{context}")]
-        # oxirgi 10 xabarni tarix sifatida qo'shish (memory o'rniga)
-        for m in history[-10:]:
-            role = "human" if m["role"] == "user" else "ai"
-            messages.append((role, m["content"]))
+        # oxirgi N xabarni tarix sifatida qo'shish (memory o'rniga),
+        # belgi limiti bilan kesilgan
+        for m in self._truncate_history(history):
+            role = "human" if m.get("role") == "user" else "ai"
+            content = str(m.get("content", ""))[:2000]
+            messages.append((role, content))
         messages.append(("human", query))
         return messages
 
@@ -145,16 +187,43 @@ class RAGService:
     def ask(self, query: str, history: list[dict]) -> dict:
         docs = self.get_docs(query)
         messages = self._build_messages(query, docs, history)
-        resp = self.llm.invoke(messages)
-        return {"answer": resp.content, "sources": self._sources(docs)}
+        try:
+            resp = self.llm.invoke(messages)
+        except Exception as e:
+            return {
+                "answer": f"LLM xatolik: {e}. API kalit/kvota ni tekshiring.",
+                "sources": self._sources(docs),
+                "error": True,
+            }
+        content = resp.content if isinstance(resp.content, str) else str(resp.content)
+        return {"answer": content, "sources": self._sources(docs)}
+
+    async def aask(self, query: str, history: list[dict]) -> dict:
+        docs = await self.aget_docs(query)
+        messages = self._build_messages(query, docs, history)
+        try:
+            resp = await self.llm.ainvoke(messages)
+        except Exception as e:
+            return {
+                "answer": f"LLM xatolik: {e}. API kalit/kvota ni tekshiring.",
+                "sources": self._sources(docs),
+                "error": True,
+            }
+        content = resp.content if isinstance(resp.content, str) else str(resp.content)
+        return {"answer": content, "sources": self._sources(docs)}
 
     async def astream(self, query: str, history: list[dict]):
         """Streaming uchun async generator — main.py da SSE ga o'raladi."""
-        docs = self.get_docs(query)
+        docs = await self.aget_docs(query)
         messages = self._build_messages(query, docs, history)
         # Avval manbalarni yuborish uchun saqlab qo'yamiz
         yield {"type": "sources", "sources": self._sources(docs)}
-        async for chunk in self.llm.astream(messages):
-            text = getattr(chunk, "content", "")
-            if text:
-                yield {"type": "token", "text": text}
+        try:
+            async for chunk in self.llm.astream(messages):
+                text = getattr(chunk, "content", "")
+                if isinstance(text, list):
+                    text = "".join([str(p) for p in text])
+                if text:
+                    yield {"type": "token", "text": str(text)}
+        except Exception as e:
+            yield {"type": "error", "text": f"LLM xatolik: {e}"}

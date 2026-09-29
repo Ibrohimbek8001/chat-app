@@ -1,23 +1,52 @@
-*{box-sizing:border-box}body{margin:0;font-family:Segoe UI,Arial;background:#0f172a;color:#e2e8f0}
+*{box-sizing:border-box}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;background:#0f172a;color:#e2e8f0}
 .layout{display:flex;height:100vh}
-.sidebar{width:300px;background:#020617;padding:16px;display:flex;flex-direction:column;gap:12px;border-right:1px solid #1e293b}
+.sidebar{width:300px;flex-shrink:0;background:#020617;padding:16px;display:flex;flex-direction:column;gap:12px;border-right:1px solid #1e293b}
 .sidebar h2{margin:0;font-size:18px}
-.sidebar button{background:#2563eb;border:none;color:#fff;padding:10px;border-radius:8px;cursor:pointer}
+.sidebar button{background:#2563eb;border:none;color:#fff;padding:10px;border-radius:8px;cursor:pointer;font-size:14px;transition:background .15s}
 .sidebar button:hover{background:#1d4ed8}
+.sidebar button:disabled{opacity:.6;cursor:default}
 .sidebar button.danger{background:#7f1d1d}.sidebar button.danger:hover{background:#991b1b}
 .upload-box{background:#0f172a;border:1px dashed #334155;border-radius:8px;padding:10px;font-size:14px}
+.upload-box .hint{color:#64748b;font-size:12px}
 .upload-box input{margin-top:8px;width:100%}
-#uploadStatus{margin-top:6px;font-size:13px;color:#93c5fd}
+#uploadStatus{margin-top:6px;font-size:13px;color:#93c5fd;min-height:18px}
 .stats{font-size:12px;color:#94a3b8}
 #sessions{list-style:none;margin:0;padding:0;overflow-y:auto;flex:1}
 #sessions li{padding:9px 10px;background:#0f172a;margin-bottom:6px;border-radius:8px;cursor:pointer;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #sessions li.active,#sessions li:hover{background:#1e293b}
-.chat{flex:1;display:flex;flex-direction:column}
+.chat{flex:1;display:flex;flex-direction:column;min-width:0}
 .messages{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:12px}
-.msg{max-width:75%;padding:12px 14px;border-radius:12px;white-space:pre-wrap;line-height:1.5}
+.msg{max-width:75%;padding:12px 14px;border-radius:12px;white-space:pre-wrap;line-height:1.5;word-wrap:break-word;animation:fadeIn .2s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 .msg.user{align-self:flex-end;background:#2563eb;color:#fff}
 .msg.ai{align-self:flex-start;background:#1e293b}
+.msg.ai code{background:#020617;padding:2px 6px;border-radius:5px;font-size:13px;font-family:ui-monospace,Menlo,Consolas,monospace}
+.msg.ai pre{background:#020617;padding:10px;border-radius:8px;overflow-x:auto;margin:8px 0}
+.msg.ai pre code{background:none;padding:0}
+.msg.ai ul{margin:8px 0;padding-left:20px}
+.msg.ai li{margin-bottom:4px}
+.empty{align-self:center;text-align:center;color:#64748b;display:flex;flex-direction:column;gap:6px;margin-top:15vh;max-width:420px}
+.empty-icon{font-size:44px}
+.empty span{font-size:13px}
 .sources{padding:6px 20px;font-size:12px;color:#93c5fd;max-height:80px;overflow-y:auto}
-.input-row{display:flex;gap:8px;padding:14px;border-top:1px solid #1e293b}
-.input-row textarea{flex:1;background:#020617;color:#fff;border:1px solid #334155;border-radius:10px;padding:10px;resize:none}
-.input-row button{width:52px;font-size:20px;background:#16a34a;border-radius:10px}
+.input-row{display:flex;gap:8px;padding:14px;border-top:1px solid #1e293b;align-items:flex-end;position:relative}
+.input-row textarea{flex:1;background:#020617;color:#fff;border:1px solid #334155;border-radius:10px;padding:10px;resize:none;min-height:44px;max-height:160px;font-size:14px;font-family:inherit}
+.input-row textarea:focus{outline:none;border-color:#2563eb}
+.input-row textarea:disabled{opacity:.6}
+.input-row button{width:52px;height:44px;flex-shrink:0;font-size:20px;background:#16a34a;border:none;color:#fff;border-radius:10px;cursor:pointer}
+.input-row button:hover{background:#15803d}
+.input-row button:disabled{opacity:.5;cursor:default}
+.input-row button.stop{background:#b91c1c}
+.input-row button.stop:hover{background:#991b1b}
+.char{position:absolute;right:78px;bottom:2px;font-size:10px;color:#475569}
+/* scrollbar */
+.messages::-webkit-scrollbar,#sessions::-webkit-scrollbar{width:8px}
+.messages::-webkit-scrollbar-thumb,#sessions::-webkit-scrollbar-thumb{background:#334155;border-radius:4px}
+/* mobile */
+@media (max-width:768px){
+.layout{flex-direction:column}
+.sidebar{width:100%;max-height:38vh;border-right:none;border-bottom:1px solid #1e293b}
+.msg{max-width:92%}
+.input-row{padding:10px}
+.char{display:none}
+}

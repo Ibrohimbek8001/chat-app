@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="description" content="RAG Chat — hujjatlar asosida savol-javob (LangChain + Gemini)" />
 <title>RAG Chat — LangChain + Gemini</title>
 <link rel="stylesheet" href="style.css" />
 </head>
@@ -12,9 +13,9 @@
     <h2>💬 RAG Chat</h2>
     <button id="newChat">+ Yangi chat</button>
     <div class="upload-box">
-      <label for="fileInput">📎 PDF / TXT yuklash</label>
+      <label for="fileInput">📎 PDF / TXT yuklash <span class="hint">(max 10MB)</span></label>
       <input type="file" id="fileInput" accept=".pdf,.txt,.md" />
-      <div id="uploadStatus"></div>
+      <div id="uploadStatus" role="status"></div>
     </div>
     <div class="row">
       <button id="clearDocs" class="danger">🗑 Hujjatlarni unut</button>
@@ -23,11 +24,19 @@
     <ul id="sessions"></ul>
   </aside>
   <main class="chat">
-    <div id="messages" class="messages"></div>
+    <div id="messages" class="messages">
+      <div id="emptyState" class="empty">
+        <div class="empty-icon">💬</div>
+        <b>Salom! Hujjat yuklang va savol bering.</b>
+        <span>Masalan: "Bu hujjat nima haqida?" — javob manbasi bilan keladi.</span>
+      </div>
+    </div>
     <div id="sources" class="sources"></div>
     <form id="form" class="input-row">
-      <textarea id="input" rows="2" placeholder="Savol yozing... (Enter = yuborish)"></textarea>
-      <button type="submit">➤</button>
+      <textarea id="input" rows="2" maxlength="4000" placeholder="Savol yozing... (Enter = yuborish, Shift+Enter = yangi qator)"></textarea>
+      <span id="charCount" class="char">0/4000</span>
+      <button type="submit" id="sendBtn" title="Yuborish">➤</button>
+      <button type="button" id="stopBtn" class="stop" style="display:none" title="To'xtatish">⏹</button>
     </form>
   </main>
 </div>
